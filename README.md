@@ -16,7 +16,7 @@ A Tamagotchi-style ESP32 desktop toy that listens to you for a few seconds, then
                                             ─────────────────
 ```
 
-`speaking` view shows a small static "you:" line above a big scrolling marquee with Trump-Boy's reply.
+`speaking` view shows a small static "you:" line above a big scrolling marquee with Donald-Boy's reply.
 
 It's a fun, comedic parody project — pure entertainment, not political commentary. Run it on your desk for laughs.
 
@@ -32,7 +32,7 @@ The stick is a thin client. All ML inference runs on a laptop or desktop with an
   capture mic         ── POST ─→    faster-whisper (ASR)
   show face                              ↓
   (HTTP keepalive)                  Claude Haiku rewrite
-                                    in Trump-Boy voice
+                                    in Donald-Boy voice
                                          ↓
   play speaker        ←─ PCM ──     OmniVoice voice clone
   show transcript                   (uses trump_8s.wav as ref)
@@ -62,7 +62,7 @@ output:   35 × $5 / 1,000,000 = $0.000175
                        total =  $0.0006/press
 ```
 
-Real cost will drift up or down a bit depending on how much you say and how long Trump-Boy rambles. Heavy use is still pocket change — pressing the button **100 times a day for a year would cost ~$22**.
+Real cost will drift up or down a bit depending on how much you say and how long Donald-Boy rambles. Heavy use is still pocket change — pressing the button **100 times a day for a year would cost ~$22**.
 
 If you want to push it lower, enable Anthropic prompt caching for the system prompt: cuts input cost ~60% during active sessions (5-minute cache TTL). Not implemented in this codebase by default; see the `claude-api` skill or the [Anthropic prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) if you want to add it.
 
@@ -311,7 +311,7 @@ sudo usermod -a -G dialout $USER
 2. Idle face: `〜〜  ¯＼_(ツ)_/¯` (with a periodic blink)
 3. Press **BtnA** → listening face appears, talk for ≤5 seconds
 4. Recording auto-stops, thinking face cycles for 1–3 seconds while the server runs ASR + Claude paraphrase + TTS
-5. Speaking face appears, cloned-Trump audio plays. Below the face: a small static `you: <transcript>` line and a big scrolling marquee with Trump-Boy's reply.
+5. Speaking face appears, cloned-Trump audio plays. Below the face: a small static `you: <transcript>` line and a big scrolling marquee with Donald-Boy's reply.
 6. Returns to idle when audio finishes.
 
 ### Volume
@@ -412,7 +412,7 @@ raw int16 PCM @ 16 kHz (5 s)
 faster-whisper ASR ─→ English transcript
         │
         ▼
-Claude Haiku ─→ Trump-Boy character paraphrase
+Claude Haiku ─→ Donald-Boy character paraphrase
         │
         ▼
 OmniVoice TTS clone (uses trump_8s.wav as voice reference)
@@ -496,7 +496,7 @@ Reusing the buffer halves memory usage compared to keeping separate input/output
 
 ## Customization
 
-- **Change Trump-Boy's personality:** edit `TRUMP_SYSTEM` in `server/main.py`. Few-shot examples teach the voice better than rule lists.
+- **Change Donald-Boy's personality:** edit `TRUMP_SYSTEM` in `server/main.py`. Few-shot examples teach the voice better than rule lists.
 - **Use a different voice:** swap `trump_8s.wav` with any 5–10 s clean clip. Update `REF_AUDIO` in `.env`. Optionally provide `REF_TEXT` (exact transcript).
 - **Different ASR model:** edit `WhisperModel("base", ...)` in `server/main.py`. Options: `tiny`, `base`, `small`, `medium`, `large-v3`. Larger = better accuracy + more VRAM + slower.
 - **Different LLM:** change `CLAUDE_MODEL` in `.env`. Or rewrite `_trump_paraphrase` in `server/main.py` to call a different provider.
@@ -521,7 +521,7 @@ Reusing the buffer halves memory usage compared to keeping separate input/output
 - [M5Stack](https://m5stack.com) — the StickC S3 hardware and the M5Unified library
 - [k2-fsa/OmniVoice](https://github.com/k2-fsa/OmniVoice) — voice cloning model
 - [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) — ASR
-- [Anthropic Claude](https://www.anthropic.com) — Trump-Boy paraphrasing
+- [Anthropic Claude](https://www.anthropic.com) — Donald-Boy paraphrasing
 - [PlatformIO](https://platformio.org) — embedded build system
 - [FastAPI](https://fastapi.tiangolo.com) — HTTP server
 
