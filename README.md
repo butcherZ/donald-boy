@@ -68,6 +68,56 @@ If you want to push it lower, enable Anthropic prompt caching for the system pro
 
 ---
 
+## Deployment options
+
+By default the server runs on your laptop and the stick connects over your home WiFi. If you want the toy to work *away from home*, four paths — ranked by cost-effectiveness:
+
+| Option | Monthly cost (30/day) | Latency per press | Tradeoff |
+|---|---|---|---|
+| **Local laptop** _(default)_ | ~$0.54 | 2–3 s | Stick must stay on your WiFi |
+| **Home server + [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)** | ~$1.50 | 2–3 s | Free public HTTPS to your home GPU; stick works anywhere |
+| **Cloud serverless GPU** ([RunPod](https://runpod.io/serverless), [Modal](https://modal.com)) | ~$1.50–4 | 2–3 s warm, **12–32 s cold** | No home GPU needed; cold starts ruin sporadic use |
+| **Cloud always-on GPU** | ~$280 | 2–3 s | Snappy but ~95% wasted compute on a hobby toy |
+
+(Cost assumes 30 presses/day plus Claude Haiku — see [Cost per request](#cost-per-request) for the math.)
+
+### Home server + Cloudflare Tunnel _(recommended for portability)_
+
+Keep your existing GPU machine as the brain; expose its `:8000` endpoint via a free Cloudflare Tunnel. The stick gets a public HTTPS URL it can reach from any WiFi — no port-forwarding, no dynamic-DNS, no exposed home IP.
+
+```bash
+# One-time setup
+sudo apt install cloudflared
+cloudflared tunnel login                                         # opens browser
+cloudflared tunnel create donald-boy
+cloudflared tunnel route dns donald-boy donald-boy.your-domain.com
+
+# Run (or wrap as a systemd service for auto-start)
+cloudflared tunnel --url http://localhost:8000 run donald-boy
+```
+
+Then update `include/secrets.h`:
+```c
+#define SERVER_URL "https://donald-boy.your-domain.com/donaldify"
+```
+Re-flash. The stick now reaches your home server from anywhere it can get to the public internet. Edge hop adds ~50–150 ms per request — well within snappy territory.
+
+Cloudflare Tunnel is free for personal use and handles HTTPS termination, so your home server keeps speaking plain HTTP locally.
+
+### Cloud serverless GPU _(when you don't have a home GPU)_
+
+If your laptop doesn't have an NVIDIA card, containerize the server and deploy to **RunPod Serverless** or **Modal**. The ESP32 firmware doesn't change — only the `SERVER_URL` does.
+
+Catch: serverless workers spin down after ~5 min of idle. For a Tamagotchi pressed every few hours, *every press is a cold start* — the worker has to load 2.45 GB of OmniVoice + 150 MB of Whisper before answering. Expect the thinking face to hold for **12–32 seconds** on those.
+
+Workaround: configure the worker to keep one hot replica (`min_workers=1` on RunPod). That's effectively the always-on option below at slightly lower cost.
+
+### Cloud always-on GPU _(not recommended for a hobby toy)_
+
+Rent a 24/7 RTX 4090 from RunPod / Vast.ai (~$0.39/hr × 730 hr/mo = ~$280/mo). Snappy responses, but ~95% of the GPU is idle for personal use. Only worth it if you're doing public demos or running many toys.
+
+---
+
 ## Prerequisites
 
 Before you start, make sure you have all of the following. Missing any one of these will block setup partway through — fix gaps now, not at debug time.
