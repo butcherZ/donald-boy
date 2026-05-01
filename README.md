@@ -42,6 +42,32 @@ Per request: ~100 ms ASR + ~500 ms Claude Haiku + ~1–2 s OmniVoice TTS. End-to
 
 ---
 
+## Cost per request
+
+Everything except the Claude Haiku paraphrase runs locally on your hardware (free). Per-press cost breakdown:
+
+| Component | Per request | Per 1,000 requests |
+|---|---|---|
+| Claude Haiku 4.5 (paraphrase) | **~$0.0006** | **~$0.60** |
+| faster-whisper ASR (local GPU) | free | free |
+| OmniVoice TTS (local GPU) | free | free |
+| WiFi / HTTP | free | free |
+
+**Calculation:** typical request is ~425 input tokens (≈400-token system prompt + 25-token transcript) and ~35 output tokens (~25-word reply). At Claude Haiku 4.5 pricing of ~$1/MTok input and ~$5/MTok output:
+
+```
+input:   425 × $1 / 1,000,000 = $0.000425
+output:   35 × $5 / 1,000,000 = $0.000175
+                                ─────────
+                       total =  $0.0006/press
+```
+
+Real cost will drift up or down a bit depending on how much you say and how long Trump-Boy rambles. Heavy use is still pocket change — pressing the button **100 times a day for a year would cost ~$22**.
+
+If you want to push it lower, enable Anthropic prompt caching for the system prompt: cuts input cost ~60% during active sessions (5-minute cache TTL). Not implemented in this codebase by default; see the `claude-api` skill or the [Anthropic prompt caching docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) if you want to add it.
+
+---
+
 ## Prerequisites
 
 Before you start, make sure you have all of the following. Missing any one of these will block setup partway through — fix gaps now, not at debug time.
@@ -68,7 +94,7 @@ Before you start, make sure you have all of the following. Missing any one of th
 
 ### Accounts / API keys
 
-- **Anthropic API key** for Claude Haiku — sign up at <https://console.anthropic.com>. Per-press cost is ~$0.0001 at typical settings, but it's not free.
+- **Anthropic API key** for Claude Haiku — sign up at <https://console.anthropic.com>. Per-press cost ~$0.0006 (see [Cost per request](#cost-per-request) above).
 - *(Optional)* **HuggingFace account + read token** — anonymous downloads work but can rate-limit. A free token at <https://huggingface.co/settings/tokens> avoids this.
 
 ### Skills assumed
@@ -434,7 +460,7 @@ Reusing the buffer halves memory usage compared to keeping separate input/output
 ## Caveats
 
 - This is a **comedic parody toy** for personal use. Voice cloning a public figure for a desktop toy in your drawer is fine; publishing convincing fake audio of real people online is not. Keep it private.
-- The Anthropic API key incurs cost. Claude Haiku is cheap (~$0.0001 per press at typical settings) but it's not free.
+- The Anthropic API key incurs cost — about $0.0006 per press (see [Cost per request](#cost-per-request)). Cheap but not free.
 - Server requires an NVIDIA GPU. Apple Silicon (MPS) is supported by both Whisper and OmniVoice but not specifically tested in this project. CPU-only is theoretically possible but inference will be 10–30× slower.
 - 2.4 GHz WiFi only.
 
