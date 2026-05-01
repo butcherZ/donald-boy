@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 
 #include "secrets.h"
+#include "config.h"
 
 // ============================================================================
 // Donald Boy — Stage 2
@@ -12,11 +13,11 @@
 
 // ----- Audio config ---------------------------------------------------------
 
-constexpr int    SAMPLE_RATE      = 16000;
-constexpr int    RECORD_SECONDS   = 5;    // how long the user can talk
-constexpr int    MAX_PLAY_SECONDS = 15;   // how long Trump can reply
-constexpr size_t RECORD_SAMPLES   = SAMPLE_RATE * RECORD_SECONDS;
-constexpr size_t RECORD_BYTES     = RECORD_SAMPLES * sizeof(int16_t);
+// Architectural constant — must match the server. Tunables (RECORD_SECONDS,
+// MAX_PLAY_SECONDS, etc.) live in include/config.h.
+constexpr int    SAMPLE_RATE       = 16000;
+constexpr size_t RECORD_SAMPLES    = SAMPLE_RATE * RECORD_SECONDS;
+constexpr size_t RECORD_BYTES      = RECORD_SAMPLES * sizeof(int16_t);
 constexpr size_t MAX_AUDIO_SAMPLES = SAMPLE_RATE * MAX_PLAY_SECONDS;
 constexpr size_t MAX_AUDIO_BYTES   = MAX_AUDIO_SAMPLES * sizeof(int16_t);
 
@@ -29,11 +30,29 @@ size_t   audioLen    = 0;  // valid samples currently in the buffer
 static char lastUserSaid[256]  = "";
 static char lastTrumpSaid[256] = "";
 
-// Hardware volume cycle (BtnB). Order is "press to lower" — wraps from mute
-// back to loudest. Stays in RAM only; resets to LOUDEST on every boot.
-constexpr uint8_t VOLUME_LEVELS[] = { 255, 192, 128, 64, 0 };  // 100/75/50/25/mute
-constexpr size_t  NUM_VOL_LEVELS  = sizeof(VOLUME_LEVELS) / sizeof(VOLUME_LEVELS[0]);
-uint8_t           volumeIndex     = 0;  // start at loudest
+// App state machine. Defined here (early) so drawMarquee() — which is defined
+// before the rest of the state-machine code — can refer to ST_TALKING.
+enum AppState { ST_IDLE, ST_LISTENING, ST_THINKING, ST_TALKING };
+AppState appState = ST_IDLE;
+
+// Hardware volume cycle (BtnB). Levels are defined in config.h.
+// Index resets to 0 (loudest) on every boot — see config.h note.
+uint8_t  volumeIndex   = 0;
+
+// Marquee runtime state (constants live in config.h).
+// marqueeStripY is set by drawAsciiFrame() so the strip sits right below the
+// "you:" line (closes the visual gap). Default placement covers the
+// "no user text yet" case before the first dialog arrives.
+int      marqueeOffset = 0;
+uint32_t lastMarqueeMs = 0;
+int      marqueeStripY = 140;
+
+// Word-wrapped reply for the vertical-scroll marquee.
+// wrapTrumpText() populates this from lastTrumpSaid on each new reply.
+constexpr int MAX_WRAPPED_LINES = 16;
+constexpr int MAX_LINE_LEN      = 80;
+char wrappedLines[MAX_WRAPPED_LINES][MAX_LINE_LEN];
+int  numWrappedLines = 0;
 
 // Decode an URL-encoded String into a fixed-size C buffer.
 void urlDecodeInto(const String& src, char* dst, size_t maxLen) {
@@ -170,14 +189,117 @@ void drawAsciiFrame(const Frame& f,
       M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
       M5.Display.setCursor(3, dialogY);
       M5.Display.printf("you: %s", userText);
-      dialogY = M5.Display.getCursorY() + 6;
-    }
-    if (trumpText && *trumpText) {
-      M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-      M5.Display.setCursor(3, dialogY);
-      M5.Display.printf("him: %s", trumpText);
+      // Park the marquee strip right below the user text. Clamp to keep it
+      // on screen even if user text wraps a lot.
+      const int maxY = M5.Display.height() - MARQUEE_STRIP_H - 4;
+      marqueeStripY  = M5.Display.getCursorY() + 10;
+      if (marqueeStripY > maxY) marqueeStripY = maxY;
+      // trumpText is rendered by drawMarquee() in that strip — not here.
     }
   }
+}
+
+// Word-wrap lastTrumpSaid into wrappedLines[] for the marquee. Greedy fit:
+// keep adding words to the current line until the next would exceed maxW.
+// Called once per reply, from postAudio() after the X-Trump-Said header
+// is decoded into lastTrumpSaid.
+void wrapTrumpText() {
+  numWrappedLines = 0;
+  if (lastTrumpSaid[0] == '\0') return;
+
+  M5.Display.setFont(&fonts::lgfxJapanGothic_20);
+  M5.Display.setTextSize(1);
+
+  const int maxW = M5.Display.width() - 8;  // 4 px gutter each side
+
+  // strtok_r mutates the buffer; copy first.
+  char buf[sizeof(lastTrumpSaid)];
+  strncpy(buf, lastTrumpSaid, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  char  current[MAX_LINE_LEN] = "";
+  char* save = nullptr;
+  for (char* word = strtok_r(buf, " ", &save);
+       word && numWrappedLines < MAX_WRAPPED_LINES;
+       word = strtok_r(nullptr, " ", &save)) {
+    char attempt[MAX_LINE_LEN];
+    if (current[0]) snprintf(attempt, sizeof(attempt), "%s %s", current, word);
+    else            snprintf(attempt, sizeof(attempt), "%s",     word);
+
+    if ((int)M5.Display.textWidth(attempt) > maxW && current[0]) {
+      // Would overflow — commit current line, start fresh with this word.
+      strncpy(wrappedLines[numWrappedLines], current, MAX_LINE_LEN - 1);
+      wrappedLines[numWrappedLines][MAX_LINE_LEN - 1] = '\0';
+      numWrappedLines++;
+      strncpy(current, word, MAX_LINE_LEN - 1);
+      current[MAX_LINE_LEN - 1] = '\0';
+    } else {
+      strncpy(current, attempt, MAX_LINE_LEN - 1);
+      current[MAX_LINE_LEN - 1] = '\0';
+    }
+  }
+  if (current[0] && numWrappedLines < MAX_WRAPPED_LINES) {
+    strncpy(wrappedLines[numWrappedLines], current, MAX_LINE_LEN - 1);
+    wrappedLines[numWrappedLines][MAX_LINE_LEN - 1] = '\0';
+    numWrappedLines++;
+  }
+}
+
+// Vertical-scroll marquee: shows ~3 wrapped lines visible at a time, the whole
+// block scrolls upward continuously while ST_TALKING. When the last line exits
+// the top of the strip, scroll resets so it enters from below again.
+void drawMarquee() {
+  if (appState != ST_TALKING)  return;
+  if (numWrappedLines == 0)    return;
+
+  uint32_t now = millis();
+  if (now - lastMarqueeMs < MARQUEE_TICK_MS) return;
+  lastMarqueeMs = now;
+
+  const int screenW = M5.Display.width();
+  const int screenH = M5.Display.height();
+  const int stripY  = marqueeStripY;
+  const int stripH  = screenH - stripY - 4;
+  if (stripH < 16) return;
+
+  M5.Display.fillRect(0, stripY, screenW, stripH, TFT_BLACK);
+
+  M5.Display.setFont(&fonts::lgfxJapanGothic_20);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextDatum(top_left);
+  M5.Display.setTextWrap(false, false);
+  M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
+
+  const int lineH  = M5.Display.fontHeight() + 4;  // small inter-line padding
+  const int totalH = numWrappedLines * lineH;
+
+  // Short replies that fit entirely in the strip → static, no scroll.
+  if (totalH <= stripH) {
+    for (int i = 0; i < numWrappedLines; ++i) {
+      M5.Display.setCursor(4, stripY + i * lineH + 2);
+      M5.Display.print(wrappedLines[i]);
+    }
+    return;
+  }
+
+  // Long replies → scroll. Clip drawing to the strip so partial top/bottom
+  // lines don't bleed into the face area above.
+  M5.Display.setClipRect(0, stripY, screenW, stripH);
+
+  for (int i = 0; i < numWrappedLines; ++i) {
+    const int y = stripY + i * lineH - marqueeOffset + 2;
+    if (y + lineH < stripY)            continue;  // already scrolled off top
+    if (y > stripY + stripH)           continue;  // not yet entered from below
+    M5.Display.setCursor(4, y);
+    M5.Display.print(wrappedLines[i]);
+  }
+
+  M5.Display.clearClipRect();
+
+  marqueeOffset += MARQUEE_SPEED_PX;
+  // Loop: when last line has fully exited the top, restart with a blank strip
+  // and let the first line scroll in from below again.
+  if (marqueeOffset > totalH) marqueeOffset = -stripH;
 }
 
 // Plain status text shown during boot / errors (no fancy face).
@@ -201,10 +323,9 @@ void drawStatus(const char* line1, const char* line2 = nullptr) {
 }
 
 // ----- State machine --------------------------------------------------------
+// (enum AppState and appState are declared at the top of the file because
+// drawMarquee() — defined earlier — guards on ST_TALKING.)
 
-enum AppState { ST_IDLE, ST_LISTENING, ST_THINKING, ST_TALKING };
-
-AppState         appState       = ST_IDLE;
 const Animation* currentAnim    = &IDLE_ANIM;
 size_t           currentFrame   = 0;
 uint32_t         frameStartedAt = 0;
@@ -308,6 +429,9 @@ bool postAudio() {
   urlDecodeInto(http.header("X-User-Said"),  lastUserSaid,  sizeof(lastUserSaid));
   urlDecodeInto(http.header("X-Trump-Said"), lastTrumpSaid, sizeof(lastTrumpSaid));
 
+  // Pre-wrap the reply for the vertical-scroll marquee.
+  wrapTrumpText();
+
   // Stream response body back into the buffer (overwriting our request).
   WiFiClient* stream = http.getStreamPtr();
   size_t totalRead = 0;
@@ -393,6 +517,8 @@ void enterThinking() {
 
   // Audio data now in audioBuffer with audioLen samples → start playback.
   appState = ST_TALKING;
+  marqueeOffset = 0;       // marquee starts off-screen right
+  lastMarqueeMs = 0;       // and ticks immediately
   switchAnim(&TALKING_ANIM);
   M5.Speaker.begin();
   M5.Speaker.playRaw(audioBuffer, audioLen, SAMPLE_RATE);
@@ -440,6 +566,7 @@ void loop() {
   if (M5.BtnB.wasPressed()) cycleVolume();
 
   tickAnim();
+  drawMarquee();  // no-op unless ST_TALKING
 
   switch (appState) {
     case ST_IDLE:

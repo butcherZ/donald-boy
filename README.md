@@ -3,16 +3,20 @@
 A Tamagotchi-style ESP32 desktop toy that listens to you for a few seconds, then replies in a cloned Donald Trump voice with a Trump-style paraphrase of what you said.
 
 ```
- listening...           donaldifying...         speaking...
+ ─ listening ─        ─ donaldifying ─        ─── speaking ───
 
       〜〜                    〜〜                    〜〜
   ¯＼_(O_O)_/¯           ¯＼_(?_?)_/¯           ¯＼_(-o-)_/¯
+   listening...          donaldifying...        speaking...
                                             you: what about taxes?
-                                            him: Taxes terrible,
-                                                 the worst. We're
-                                                 cutting them, the
-                                                 biggest cuts. Sad!
+
+                                            ─────────────────
+                                            ◄ Taxes terrible,
+                                              the worst!     ◄
+                                            ─────────────────
 ```
+
+`speaking` view shows a small static "you:" line above a big scrolling marquee with Trump-Boy's reply.
 
 It's a fun, comedic parody project — pure entertainment, not political commentary. Run it on your desk for laughs.
 
@@ -230,9 +234,13 @@ sudo usermod -a -G dialout $USER
 1. `WiFi...` → `connected!` and your IP, briefly
 2. Idle face: `〜〜  ¯＼_(ツ)_/¯` (with a periodic blink)
 3. Press **BtnA** → listening face appears, talk for ≤5 seconds
-4. Recording auto-stops, thinking face cycles for 1–3 seconds
-5. Speaking face appears with cloned-Trump audio. The transcript of what you said and Trump-Boy's reply is rendered under the face during playback.
-6. Returns to idle when audio ends.
+4. Recording auto-stops, thinking face cycles for 1–3 seconds while the server runs ASR + Claude paraphrase + TTS
+5. Speaking face appears, cloned-Trump audio plays. Below the face: a small static `you: <transcript>` line and a big scrolling marquee with Trump-Boy's reply.
+6. Returns to idle when audio finishes.
+
+### Volume
+
+Press **BtnB** at any time to step through volume levels: **100% → 75% → 50% → 25% → mute → 100%**. A full-screen indicator flashes briefly showing the new level. Volume change is per-session — boot always starts at max. To set the *ceiling* loudness across sessions, edit `VOLUME=` in `server/.env`.
 
 ---
 
@@ -261,13 +269,22 @@ sudo usermod -a -G dialout $USER
 | `WIFI_PASS`  | WiFi password |
 | `SERVER_URL` | Full URL to the server, e.g. `http://192.168.1.42:8000/donaldify` |
 
-`src/main.cpp` constants (compile-time only — change requires re-flash):
+`include/config.h` (firmware tunables, compile-time — change requires re-flash):
+
+| Constant | Default | What it does |
+|---|---|---|
+| `RECORD_SECONDS` | `5` | How long the user can talk per press |
+| `MAX_PLAY_SECONDS` | `15` | How long Trump can reply. Must be ≥ server `MAX_OUT_SECONDS` |
+| `MARQUEE_SPEED_PX` | `2` | Scrolling marquee advance per tick (1 = slow, 4 = fast) |
+| `MARQUEE_TICK_MS` | `30` | Marquee redraw interval (ms). Lower = smoother but more SPI traffic |
+| `MARQUEE_STRIP_H` | `40` | Marquee strip height in pixels |
+| `VOLUME_LEVELS[]` | `{255,192,128,64,0}` | Preset levels cycled by BtnB |
+
+Architectural constant in `src/main.cpp` — only change if you also change the server:
 
 | Constant | Default | What it does |
 |---|---|---|
 | `SAMPLE_RATE` | `16000` | Mic + speaker sample rate. Must match server |
-| `RECORD_SECONDS` | `5` | How long the user can talk per press |
-| `MAX_PLAY_SECONDS` | `15` | How long Trump can reply. Must be ≥ server `MAX_OUT_SECONDS` |
 
 ---
 
@@ -282,7 +299,8 @@ donald-boy/
 ├── src/main.cpp                # Firmware: state machine + audio + WiFi/HTTP
 ├── include/
 │   ├── secrets.h.example       # Template for WiFi creds (commit-safe)
-│   └── secrets.h               # Your real creds (git-ignored)
+│   ├── secrets.h               # Your real creds (git-ignored)
+│   └── config.h                # Firmware tunables (commit-safe)
 ├── lib/                        # Local Arduino libs (empty by default)
 └── server/
     ├── main.py                 # FastAPI: ASR -> LLM -> TTS pipeline
@@ -335,6 +353,29 @@ HTTP body + X-User-Said + X-Trump-Said headers
 
 Models are loaded once at startup via FastAPI's `lifespan` handler — they live in GPU memory across requests.
 
+### Display layout (TALKING state)
+
+```
+┌─────────────────┐  ← y = 0
+│      〜〜       │     hair (orange, gothic_24)
+│  ¯＼_(-o-)_/¯  │     body (green, gothic_24, animated)
+│   speaking...   │     status label (light grey, gothic_16)
+│                 │
+│ you: what about │     transcript (cyan, gothic_12, wrapped)
+│      taxes?     │
+│                 │
+│ ─────────────── │
+│ ◄ Taxes terri…  │     marquee strip (yellow, gothic_24, scrolling)
+│ ─────────────── │
+└─────────────────┘  ← y = 240
+```
+
+Each pass writes to a different region:
+- `drawAsciiFrame()` redraws the upper area (face + label + "you:" line) on every animation frame
+- `drawMarquee()` redraws ONLY the bottom strip every ~30 ms, leaving the face above untouched
+
+This split lets the marquee scroll smoothly without touching the rest of the screen.
+
 ### Audio buffer
 
 The stick allocates a single buffer in PSRAM (8 MB available). The same buffer is used for both recording and playback:
@@ -384,6 +425,9 @@ Reusing the buffer halves memory usage compared to keeping separate input/output
 - **Different ASR model:** edit `WhisperModel("base", ...)` in `server/main.py`. Options: `tiny`, `base`, `small`, `medium`, `large-v3`. Larger = better accuracy + more VRAM + slower.
 - **Different LLM:** change `CLAUDE_MODEL` in `.env`. Or rewrite `_trump_paraphrase` in `server/main.py` to call a different provider.
 - **Different face:** edit `IDLE_FRAMES`, `LISTENING_FRAMES`, `THINKING_FRAMES`, `TALKING_FRAMES` in `src/main.cpp`. Each frame is `{ hair, body, durationMs }`. Stick to ASCII or fullwidth Unicode for reliable rendering.
+- **Marquee speed:** in `include/config.h`, raise `MARQUEE_SPEED_PX` for faster scroll, lower `MARQUEE_TICK_MS` for smoother updates. Both require a re-flash.
+- **Volume presets:** edit `VOLUME_LEVELS[]` in `include/config.h` to change BtnB's stepped levels. Last entry should stay `0` so wrap-around mute always works.
+- **Recording duration:** bump `RECORD_SECONDS` in `include/config.h` if 5 s isn't enough. The audio buffer in PSRAM scales automatically.
 
 ---
 
