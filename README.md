@@ -38,14 +38,43 @@ Per request: ~100 ms ASR + ~500 ms Claude Haiku + ~1–2 s OmniVoice TTS. End-to
 
 ---
 
-## Hardware
+## Prerequisites
 
-- **M5StickC S3** (ESP32-S3-PICO-1-N8R8 — 8 MB flash, 8 MB PSRAM, 1.14" LCD, ES8311 codec with mic + speaker)
-- USB-C data cable (charge-only cables won't work for flashing)
-- Server machine with an **NVIDIA GPU** (tested on RTX 4070 12 GB; ≥6 GB VRAM should be enough)
-- **2.4 GHz WiFi** (ESP32-S3 does not support 5 GHz)
-- Anthropic API key for Claude Haiku
-- A reference audio clip of Trump speaking (see [Reference audio](#reference-audio))
+Before you start, make sure you have all of the following. Missing any one of these will block setup partway through — fix gaps now, not at debug time.
+
+### Hardware
+
+- **M5StickC S3** dev kit (ESP32-S3-PICO-1-N8R8 — 8 MB flash, 8 MB PSRAM, 1.14" LCD, ES8311 codec with mic + speaker)
+- **USB-C data cable** — many phone-charging cables omit data lines and won't enumerate as `/dev/ttyACM*`. Use a known-good data cable
+- **Server machine** with an **NVIDIA GPU**, ≥6 GB VRAM (tested on RTX 4070 12 GB; smaller GPUs may work but the model is tight at 6 GB)
+- **2.4 GHz WiFi** the stick can join. ESP32-S3 does not support 5 GHz; many home routers expose both bands under the same SSID, but if your network is 5 GHz only, you'll need to enable 2.4 GHz first
+
+### Server software
+
+- **Python 3.10+** with `venv` support
+- **NVIDIA driver** new enough for CUDA 12.x (driver R535 or newer; check with `nvidia-smi`)
+- **ffmpeg** and **yt-dlp** (used to extract the voice reference clip): `sudo apt install -y ffmpeg yt-dlp`
+- **~5 GB free disk** for the OmniVoice + Whisper model caches in `~/.cache/huggingface/`
+
+### Firmware software
+
+- **VS Code** with the **PlatformIO IDE** extension installed
+- ESP32-S3 toolchain — PlatformIO downloads it on first build (~500 MB, one time, automatic)
+- On Linux: membership in the `dialout` group so you can talk to the serial port (see [Troubleshooting](#troubleshooting))
+
+### Accounts / API keys
+
+- **Anthropic API key** for Claude Haiku — sign up at <https://console.anthropic.com>. Per-press cost is ~$0.0001 at typical settings, but it's not free.
+- *(Optional)* **HuggingFace account + read token** — anonymous downloads work but can rate-limit. A free token at <https://huggingface.co/settings/tokens> avoids this.
+
+### Skills assumed
+
+- Comfortable with a terminal, Python virtual environments, and editing config files
+- Basic networking literacy: knowing how to find your laptop's LAN IP (`hostname -I` on Linux)
+
+### Reference audio
+
+- A 5–10 second WAV clip of Donald Trump speaking — single voice, no music, no crowd noise. The setup steps below show how to extract one from a public-domain inauguration speech.
 
 ---
 
